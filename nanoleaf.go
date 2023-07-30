@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"time"
 )
 
 type Controller struct {
@@ -65,6 +66,21 @@ func (c *Controller) On(ctx context.Context) error {
 		} `json:"on"`
 	}{}
 	req.On.Value = true
+	return c.put(ctx, "/state", req)
+}
+
+// SetBrightness sets the brightness to a value in [0,100], over a period of time.
+func (c *Controller) SetBrightness(ctx context.Context, value int, dur time.Duration) error {
+	req := struct {
+		Brightness struct {
+			Value    int `json:"value"`
+			Duration int `json:"duration,omitempty"`
+		} `json:"brightness"`
+	}{}
+	req.Brightness.Value = value
+	if dur >= 0 {
+		req.Brightness.Duration = int(dur / time.Second)
+	}
 	return c.put(ctx, "/state", req)
 }
 
