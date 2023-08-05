@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -130,16 +131,57 @@ func (c *Controller) api(token, path string) string {
 	return "http://" + c.ip + ":16021/api/v1/" + token + path
 }
 
+// Automatic retry parameters.
+//
+// Doing GET and PUTs to a Nanoleaf controller on the LAN should usually be
+// very quick, but they regularly fail, so we set strict timeouts and
+// aggressively retry to improve reliability.
+const (
+	baseTimeout = 100 * time.Millisecond
+	backoffMult = 1.5
+	maxTimeout  = 5 * time.Second
+)
+
+type retryableOp func(context.Context) error
+
+func (c *Controller) retry(ctx context.Context, f retryableOp) error {
+	// Classic exponential backoff.
+
+	timeout := baseTimeout
+	for {
+		sub, cancel := context.WithTimeout(ctx, timeout)
+		debugf("Trying operation with timeout=%v", timeout)
+		t0 := time.Now()
+		err := f(sub)
+		cancel()
+		if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+			// Success, or a non-timeout failure.
+			debugf("Operation took %v", time.Since(t0))
+			return err
+		}
+		// Try again.
+		timeout = time.Duration(float64(timeout) * backoffMult)
+		if timeout > maxTimeout {
+			timeout = maxTimeout
+		}
+	}
+}
+
 func (c *Controller) get(ctx context.Context, path string, dst interface{}) error {
 	debugf("GET to %s", c.api("<tok>", path))
-	req, err := http.NewRequestWithContext(ctx, "GET", c.api(c.authToken, path), nil)
-	if err != nil {
-		return fmt.Errorf("preparing HTTP request: %w", err)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("making HTTP request: %w", err)
-	}
+	var resp *http.Response
+	err := c.retry(ctx, func(ctx context.Context) error {
+		req, err := http.NewRequestWithContext(ctx, "GET", c.api(c.authToken, path), nil)
+		if err != nil {
+			return fmt.Errorf("preparing HTTP request: %w", err)
+		}
+		req.Close = true // If we need to retry, use a fresh connection.
+		resp, err = http.DefaultClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("making HTTP request: %w", err)
+		}
+		return nil
+	})
 	body, err := ioutil.ReadAll(resp.Body)
 	resp.Body.Close()
 	debugf("  %s\n  %s", resp.Status, body)
@@ -158,14 +200,19 @@ func (c *Controller) put(ctx context.Context, path string, obj interface{}) erro
 		return fmt.Errorf("encoding JSON body: %w", err)
 	}
 	debugf("PUT to %s\n  %s", c.api("<tok>", path), body)
-	req, err := http.NewRequestWithContext(ctx, "PUT", c.api(c.authToken, path), bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("preparing HTTP request: %w", err)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("making HTTP request: %w", err)
-	}
+	var resp *http.Response
+	err = c.retry(ctx, func(ctx context.Context) error {
+		req, err := http.NewRequestWithContext(ctx, "PUT", c.api(c.authToken, path), bytes.NewReader(body))
+		if err != nil {
+			return fmt.Errorf("preparing HTTP request: %w", err)
+		}
+		req.Close = true // If we need to retry, use a fresh connection.
+		resp, err = http.DefaultClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("making HTTP request: %w", err)
+		}
+		return nil
+	})
 	body, err = ioutil.ReadAll(resp.Body)
 	resp.Body.Close()
 	debugf("  %s", resp.Status)
