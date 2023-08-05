@@ -182,6 +182,9 @@ func (c *Controller) get(ctx context.Context, path string, dst interface{}) erro
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
 	body, err := ioutil.ReadAll(resp.Body)
 	resp.Body.Close()
 	debugf("  %s\n  %s", resp.Status, body)
@@ -213,6 +216,9 @@ func (c *Controller) put(ctx context.Context, path string, obj interface{}) erro
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
 	body, err = ioutil.ReadAll(resp.Body)
 	resp.Body.Close()
 	debugf("  %s", resp.Status)
