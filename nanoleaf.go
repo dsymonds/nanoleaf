@@ -11,8 +11,21 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 )
+
+const rawDebug = false
+
+func debugf(format string, args ...interface{}) {
+	if !rawDebug {
+		return
+	}
+	for _, line := range strings.Split(fmt.Sprintf(format, args...), "\n") {
+		fmt.Fprintf(os.Stderr, "\t| %s\n", line)
+	}
+}
 
 type Controller struct {
 	ip        string
@@ -91,8 +104,35 @@ func (c *Controller) SetEffect(ctx context.Context, effect string) error {
 	return c.put(ctx, "/effects", req)
 }
 
+type Color struct {
+	Hue        int // [0,360]
+	Saturation int // [0,100]
+	Brightness int // [0,100]
+}
+
+func (c *Controller) SetColor(ctx context.Context, col Color) error {
+	var req struct {
+		H struct {
+			X int `json:"value"`
+		} `json:"hue"`
+		S struct {
+			X int `json:"value"`
+		} `json:"sat"`
+		B struct {
+			X int `json:"value"`
+		} `json:"brightness"`
+	}
+	req.H.X, req.S.X, req.B.X = col.Hue, col.Saturation, col.Brightness
+	return c.put(ctx, "/state", req)
+}
+
+func (c *Controller) api(token, path string) string {
+	return "http://" + c.ip + ":16021/api/v1/" + token + path
+}
+
 func (c *Controller) get(ctx context.Context, path string, dst interface{}) error {
-	req, err := http.NewRequestWithContext(ctx, "GET", "http://"+c.ip+":16021/api/v1/"+c.authToken+path, nil)
+	debugf("GET to %s", c.api("<tok>", path))
+	req, err := http.NewRequestWithContext(ctx, "GET", c.api(c.authToken, path), nil)
 	if err != nil {
 		return fmt.Errorf("preparing HTTP request: %w", err)
 	}
@@ -102,7 +142,7 @@ func (c *Controller) get(ctx context.Context, path string, dst interface{}) erro
 	}
 	body, err := ioutil.ReadAll(resp.Body)
 	resp.Body.Close()
-	// TODO: body to capture?
+	debugf("  %s\n  %s", resp.Status, body)
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("HTTP response %s", resp.Status)
 	}
@@ -117,7 +157,8 @@ func (c *Controller) put(ctx context.Context, path string, obj interface{}) erro
 	if err != nil {
 		return fmt.Errorf("encoding JSON body: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, "PUT", "http://"+c.ip+":16021/api/v1/"+c.authToken+path, bytes.NewReader(body))
+	debugf("PUT to %s\n  %s", c.api("<tok>", path), body)
+	req, err := http.NewRequestWithContext(ctx, "PUT", c.api(c.authToken, path), bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("preparing HTTP request: %w", err)
 	}
@@ -125,7 +166,12 @@ func (c *Controller) put(ctx context.Context, path string, obj interface{}) erro
 	if err != nil {
 		return fmt.Errorf("making HTTP request: %w", err)
 	}
-	// TODO: body to capture?
+	body, err = ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
+	debugf("  %s", resp.Status)
+	if resp.StatusCode != 204 {
+		debugf("  %s", body)
+	}
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("HTTP response %s", resp.Status)
 	}
