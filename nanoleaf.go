@@ -159,6 +159,10 @@ func (c *Controller) retry(ctx context.Context, f retryableOp) error {
 			debugf("Operation took %v", time.Since(t0))
 			return err
 		}
+		if err := ctx.Err(); err != nil {
+			// Give up on the overall effort.
+			return err
+		}
 		// Try again.
 		timeout = time.Duration(float64(timeout) * backoffMult)
 		if timeout > maxTimeout {
