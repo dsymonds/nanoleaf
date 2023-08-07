@@ -31,6 +31,15 @@ func debugf(format string, args ...interface{}) {
 type Controller struct {
 	ip        string
 	authToken string
+
+	// Tracef, if set, will be used to write trace lines.
+	Tracef func(ctx context.Context, format string, args ...interface{})
+}
+
+func (c *Controller) tracef(ctx context.Context, format string, args ...interface{}) {
+	if c.Tracef != nil {
+		c.Tracef(ctx, format, args...)
+	}
 }
 
 func Connect(ip, authToken string) (*Controller, error) {
@@ -150,17 +159,20 @@ func (c *Controller) retry(ctx context.Context, f retryableOp) error {
 	timeout := baseTimeout
 	for {
 		sub, cancel := context.WithTimeout(ctx, timeout)
+		c.tracef(ctx, "Nanoleaf operation starting with timeout %v", timeout)
 		debugf("Trying operation with timeout=%v", timeout)
 		t0 := time.Now()
 		err := f(sub)
 		cancel()
 		if err == nil || !errors.Is(err, context.DeadlineExceeded) {
 			// Success, or a non-timeout failure.
+			c.tracef(ctx, "Nanoleaf operation finished after %v", time.Since(t0))
 			debugf("Operation took %v", time.Since(t0))
 			return err
 		}
 		if err := ctx.Err(); err != nil {
 			// Give up on the overall effort.
+			c.tracef(ctx, "Nanoleaf operation giving up")
 			return err
 		}
 		// Try again.
@@ -172,6 +184,7 @@ func (c *Controller) retry(ctx context.Context, f retryableOp) error {
 }
 
 func (c *Controller) get(ctx context.Context, path string, dst interface{}) error {
+	c.tracef(ctx, "Nanoleaf GET to %s", c.api("<tok>", path))
 	debugf("GET to %s", c.api("<tok>", path))
 	var resp *http.Response
 	err := c.retry(ctx, func(ctx context.Context) error {
@@ -206,6 +219,7 @@ func (c *Controller) put(ctx context.Context, path string, obj interface{}) erro
 	if err != nil {
 		return fmt.Errorf("encoding JSON body: %w", err)
 	}
+	c.tracef(ctx, "Nanoleaf PUT to %s", c.api("<tok>", path))
 	debugf("PUT to %s\n  %s", c.api("<tok>", path), body)
 	var resp *http.Response
 	err = c.retry(ctx, func(ctx context.Context) error {
