@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -153,6 +154,20 @@ const (
 
 type retryableOp func(context.Context) error
 
+// retryableErr reports whether the error should cause another try.
+func retryableErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		return true
+	}
+	return false // any other error is probably permanent
+}
+
 func (c *Controller) retry(ctx context.Context, f retryableOp) error {
 	// Classic exponential backoff.
 
@@ -164,7 +179,7 @@ func (c *Controller) retry(ctx context.Context, f retryableOp) error {
 		t0 := time.Now()
 		err := f(sub)
 		cancel()
-		if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		if !retryableErr(err) {
 			// Success, or a non-timeout failure.
 			c.tracef(ctx, "Nanoleaf operation finished after %v", time.Since(t0))
 			debugf("Operation took %v", time.Since(t0))
