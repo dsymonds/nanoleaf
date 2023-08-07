@@ -162,7 +162,8 @@ func retryableErr(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
-	if ne, ok := err.(net.Error); ok && ne.Timeout() {
+	var neterr net.Error
+	if errors.As(err, &neterr) && neterr.Timeout() {
 		return true
 	}
 	return false // any other error is probably permanent
@@ -178,10 +179,11 @@ func (c *Controller) retry(ctx context.Context, f retryableOp) error {
 		debugf("Trying operation with timeout=%v", timeout)
 		t0 := time.Now()
 		err := f(sub)
+		subCtxDone := sub.Err() != nil // for debugging some of this
 		cancel()
 		if !retryableErr(err) {
 			// Success, or a non-timeout failure.
-			c.tracef(ctx, "Nanoleaf operation finished after %v", time.Since(t0))
+			c.tracef(ctx, "Nanoleaf operation finished after %v (subCtxDone: %t)", time.Since(t0), subCtxDone)
 			debugf("Operation took %v", time.Since(t0))
 			return err
 		}
